@@ -19,8 +19,8 @@
 ##### Global variables #####
 
 DOCKER   ?= docker
-REGISTRY ?= nvidia
-VERSION  ?= 1.0.0-beta6
+REGISTRY ?= hub.gddi.com/kube-plugins
+VERSION  ?= 1.0.0-beta6_1
 
 ##### Public rules #####
 

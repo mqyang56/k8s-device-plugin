@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	envDisableHealthChecks = "DP_DISABLE_HEALTHCHECKS"
-	allHealthChecks        = "xids"
+	envDisableHealthChecks    = "DP_DISABLE_HEALTHCHECKS"
+	allHealthChecks           = "xids"
+	envEnableFilterRunningGPU = "FILTER_RNNING_GPU"
 )
 
 type Device struct {
@@ -41,7 +42,7 @@ type ResourceManager interface {
 	CheckHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *Device)
 }
 
-type GpuDeviceManager struct {}
+type GpuDeviceManager struct{}
 
 func check(err error) {
 	if err != nil {
@@ -101,6 +102,31 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 	defer nvml.DeleteEventSet(eventSet)
 
 	for _, d := range devices {
+		// filter gpus which had running one or more processes
+		if os.Getenv(envEnableFilterRunningGPU) == "enable" {
+			count, err := nvml.GetDeviceCount()
+			check(err)
+
+			hasProcess := false
+			for i := uint(0); i < count; i++ {
+				device, err := nvml.NewDeviceLite(i)
+				check(err)
+				if device.UUID == d.ID {
+					stat, err := device.Status()
+					check(err)
+					if len(stat.Processes) > 0 {
+						hasProcess = true
+						break
+					}
+				}
+			}
+			if hasProcess {
+				log.Printf("ignore gpu %s, which had running one or more processes \n", d.Path)
+				unhealthy <- d
+				continue
+			}
+		}
+
 		err := nvml.RegisterEventForDevice(eventSet, nvml.XidCriticalError, d.ID)
 		if err != nil && strings.HasSuffix(err.Error(), "Not Supported") {
 			log.Printf("Warning: %s is too old to support healthchecking: %s. Marking it unhealthy.", d.ID, err)

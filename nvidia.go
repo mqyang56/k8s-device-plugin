@@ -19,7 +19,9 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
 
@@ -27,14 +29,19 @@ import (
 )
 
 const (
-	envDisableHealthChecks    = "DP_DISABLE_HEALTHCHECKS"
-	allHealthChecks           = "xids"
-	envEnableFilterRunningGPU = "FILTER_RNNING_GPU"
+	envDisableHealthChecks = "DP_DISABLE_HEALTHCHECKS"
+	allHealthChecks        = "xids"
+
+	envEnableFilterByProcess = "FILTER_BY_PROCESS"
+	envEnableFilterByGPUUTIL = "FILTER_BY_GPU_UTIL"
+	envEnableFilterByMemory  = "FILTER_BY_MEMORY"
 )
 
 type Device struct {
 	pluginapi.Device
-	Path string
+	Path                 string
+	CustomDefinedHealthy bool
+	Index                uint
 }
 
 type ResourceManager interface {
@@ -102,31 +109,6 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 	defer nvml.DeleteEventSet(eventSet)
 
 	for _, d := range devices {
-		// filter gpus which had running one or more processes
-		if os.Getenv(envEnableFilterRunningGPU) == "enable" {
-			count, err := nvml.GetDeviceCount()
-			check(err)
-
-			hasProcess := false
-			for i := uint(0); i < count; i++ {
-				device, err := nvml.NewDeviceLite(i)
-				check(err)
-				if device.UUID == d.ID {
-					stat, err := device.Status()
-					check(err)
-					if len(stat.Processes) > 0 {
-						hasProcess = true
-						break
-					}
-				}
-			}
-			if hasProcess {
-				log.Printf("ignore gpu %s, which had running one or more processes \n", d.Path)
-				unhealthy <- d
-				continue
-			}
-		}
-
 		err := nvml.RegisterEventForDevice(eventSet, nvml.XidCriticalError, d.ID)
 		if err != nil && strings.HasSuffix(err.Error(), "Not Supported") {
 			log.Printf("Warning: %s is too old to support healthchecking: %s. Marking it unhealthy.", d.ID, err)
@@ -134,6 +116,112 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 			continue
 		}
 		check(err)
+	}
+
+	// filter gpus which had running one or more processes
+	if os.Getenv(envEnableFilterByProcess) != "" || os.Getenv(envEnableFilterByGPUUTIL) != "" || os.Getenv(envEnableFilterByMemory) != "" {
+		log.Printf("Environments: %s=%s,%s=%s,%s=%s", envEnableFilterByProcess, os.Getenv(envEnableFilterByProcess), envEnableFilterByGPUUTIL, os.Getenv(envEnableFilterByGPUUTIL), envEnableFilterByMemory, os.Getenv(envEnableFilterByMemory))
+		go func() {
+			t := time.NewTicker(3 * time.Second)
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+					for i, d := range devices {
+						if !d.CustomDefinedHealthy && d.Health == pluginapi.Unhealthy {
+							continue
+						}
+
+						count, err := nvml.GetDeviceCount()
+						if err != nil {
+							log.Printf("Error: %v \n", err)
+							continue
+						}
+
+						unHealthy := false
+						var index uint
+						for j := uint(0); j < count; j++ {
+							device, err := nvml.NewDeviceLite(j)
+							if err != nil {
+								log.Printf("Error: %v \n", err)
+								continue
+							}
+							if device.UUID != d.ID {
+								continue
+							}
+
+							stat, err := device.Status()
+							if err != nil {
+								log.Printf("Error: failed to get device status %v", err)
+								continue
+							}
+
+							if envProcess := os.Getenv(envEnableFilterByProcess); envProcess != "" {
+								p, err := strconv.Atoi(envProcess)
+								if err != nil {
+									log.Printf("Error: %v \n", err)
+									continue
+								}
+
+								if p == 0 || len(stat.Processes) < p {
+									continue
+								}
+							}
+
+							if envUtil := os.Getenv(envEnableFilterByGPUUTIL); envUtil != "" {
+								util, err := strconv.Atoi(envUtil)
+								if err != nil {
+									log.Printf("Error: %v \n", err)
+									continue
+								}
+								if *stat.Utilization.GPU > 100 {
+									log.Printf("Warning Exception Util GPU: %d \n", *stat.Utilization.GPU)
+									continue
+								}
+
+								if *stat.Utilization.GPU <= uint(util) {
+									continue
+								}
+							}
+
+							if envMemory := os.Getenv(envEnableFilterByMemory); envMemory != "" {
+								memory, err := strconv.Atoi(envMemory)
+								if err != nil {
+									log.Printf("Error: %v \n", err)
+									continue
+								}
+								used := *stat.Memory.Global.Used * uint64(100) / (*stat.Memory.Global.Free + *stat.Memory.Global.Used)
+								if used <= uint64(memory) {
+									continue
+								}
+							}
+
+							if d.Health == pluginapi.Healthy {
+								log.Printf("Prepare to set device %s-%d unHelthy, which Processes=[%+v] UTIL=[%d] Memeory=[%dMb/%dMb(%d)]\n", device.UUID, j, stat.Processes, *stat.Utilization.GPU, *stat.Memory.Global.Used, *stat.Memory.Global.Free+*stat.Memory.Global.Used, *stat.Memory.Global.Used*100/(*stat.Memory.Global.Free+*stat.Memory.Global.Used))
+							}
+							unHealthy = true
+							index = j
+							break
+						}
+
+						if unHealthy && d.Health == pluginapi.Healthy {
+							devices[i].Health = pluginapi.Unhealthy
+							devices[i].CustomDefinedHealthy = true
+							devices[i].Index = index
+							unhealthy <- d
+							continue
+						}
+						if !unHealthy && d.Health == pluginapi.Unhealthy {
+							devices[i].Health = pluginapi.Healthy
+							devices[i].CustomDefinedHealthy = false
+							unhealthy <- d
+							continue
+						}
+					}
+				}
+			}
+		}()
 	}
 
 	for {
@@ -158,15 +246,17 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 		if e.UUID == nil || len(*e.UUID) == 0 {
 			// All devices are unhealthy
 			log.Printf("XidCriticalError: Xid=%d, All devices will go unhealthy.", e.Edata)
-			for _, d := range devices {
+			for i, d := range devices {
+				devices[i].CustomDefinedHealthy = false
 				unhealthy <- d
 			}
 			continue
 		}
 
-		for _, d := range devices {
+		for i, d := range devices {
 			if d.ID == *e.UUID {
 				log.Printf("XidCriticalError: Xid=%d on Device=%s, the device will go unhealthy.", e.Edata, d.ID)
+				devices[i].CustomDefinedHealthy = false
 				unhealthy <- d
 			}
 		}

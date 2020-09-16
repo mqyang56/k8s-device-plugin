@@ -38,12 +38,12 @@ type NvidiaDevicePlugin struct {
 	ResourceManager
 	resourceName   string
 	allocateEnvvar string
-	socket string
+	socket         string
 
-	server *grpc.Server
+	server        *grpc.Server
 	cachedDevices []*Device
-	health chan *Device
-	stop   chan interface{}
+	health        chan *Device
+	stop          chan interface{}
 }
 
 // NewNvidiaDevicePlugin returns an initialized NvidiaDevicePlugin
@@ -202,9 +202,11 @@ func (m *NvidiaDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Device
 		case <-m.stop:
 			return nil
 		case d := <-m.health:
-			// FIXME: there is no way to recover from the Unhealthy state.
-			d.Health = pluginapi.Unhealthy
-			log.Printf("'%s' device marked unhealthy: %s", m.resourceName, d.ID)
+			if d.Health == pluginapi.Unhealthy {
+				log.Printf("'%s' device marked unhealthy: %s - %d", m.resourceName, d.ID, d.Index)
+			} else {
+				log.Printf("'%s'device marked healthy: %s - %d", m.resourceName, d.ID, d.Index)
+			}
 			s.Send(&pluginapi.ListAndWatchResponse{Devices: m.apiDevices()})
 		}
 	}

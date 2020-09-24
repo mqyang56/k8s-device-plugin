@@ -164,8 +164,13 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 									continue
 								}
 
-								if p == 0 || len(stat.Processes) < p {
-									continue
+								if p != 0 && len(stat.Processes) >= p {
+									if d.Health == pluginapi.Healthy {
+										log.Printf("Prepare to set device %s-%d unHelthy, which Processes=[%+v] UTIL=[%d] Memeory=[%dMb/%dMb(%d)]\n", device.UUID, j, stat.Processes, *stat.Utilization.GPU, *stat.Memory.Global.Used, *stat.Memory.Global.Free+*stat.Memory.Global.Used, *stat.Memory.Global.Used*100/(*stat.Memory.Global.Free+*stat.Memory.Global.Used))
+									}
+									unHealthy = true
+									index = j
+									break
 								}
 							}
 
@@ -180,8 +185,13 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 									continue
 								}
 
-								if *stat.Utilization.GPU <= uint(util) {
-									continue
+								if *stat.Utilization.GPU > uint(util) {
+									if d.Health == pluginapi.Healthy {
+										log.Printf("Prepare to set device %s-%d unHelthy, which Processes=[%+v] UTIL=[%d] Memeory=[%dMb/%dMb(%d)]\n", device.UUID, j, stat.Processes, *stat.Utilization.GPU, *stat.Memory.Global.Used, *stat.Memory.Global.Free+*stat.Memory.Global.Used, *stat.Memory.Global.Used*100/(*stat.Memory.Global.Free+*stat.Memory.Global.Used))
+									}
+									unHealthy = true
+									index = j
+									break
 								}
 							}
 
@@ -192,17 +202,15 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 									continue
 								}
 								used := *stat.Memory.Global.Used * uint64(100) / (*stat.Memory.Global.Free + *stat.Memory.Global.Used)
-								if used <= uint64(memory) {
-									continue
+								if used > uint64(memory) {
+									if d.Health == pluginapi.Healthy {
+										log.Printf("Prepare to set device %s-%d unHelthy, which Processes=[%+v] UTIL=[%d] Memeory=[%dMb/%dMb(%d)]\n", device.UUID, j, stat.Processes, *stat.Utilization.GPU, *stat.Memory.Global.Used, *stat.Memory.Global.Free+*stat.Memory.Global.Used, *stat.Memory.Global.Used*100/(*stat.Memory.Global.Free+*stat.Memory.Global.Used))
+									}
+									unHealthy = true
+									index = j
+									break
 								}
 							}
-
-							if d.Health == pluginapi.Healthy {
-								log.Printf("Prepare to set device %s-%d unHelthy, which Processes=[%+v] UTIL=[%d] Memeory=[%dMb/%dMb(%d)]\n", device.UUID, j, stat.Processes, *stat.Utilization.GPU, *stat.Memory.Global.Used, *stat.Memory.Global.Free+*stat.Memory.Global.Used, *stat.Memory.Global.Used*100/(*stat.Memory.Global.Free+*stat.Memory.Global.Used))
-							}
-							unHealthy = true
-							index = j
-							break
 						}
 
 						if unHealthy && d.Health == pluginapi.Healthy {

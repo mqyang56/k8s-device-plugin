@@ -49,7 +49,7 @@ spec:
       - image: nvidia/k8s-device-plugin:1.0.0-beta6
         env:
           - name: FILTER_BY_PROCESS
-            value: '1'
+            value: '0'
           - name: FILTER_BY_GPU_UTIL
             value: '20'
           - name: FILTER_BY_MEMORY

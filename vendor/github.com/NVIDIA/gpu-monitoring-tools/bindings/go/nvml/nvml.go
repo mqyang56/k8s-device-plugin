@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -255,6 +256,7 @@ type ProcessInfo struct {
 
 type DeviceStatus struct {
 	Power       *uint
+	FanSpeed    *uint
 	Temperature *uint
 	Utilization UtilizationInfo
 	Memory      MemoryInfo
@@ -334,6 +336,30 @@ func NewDevice(idx uint) (device *Device, err error) {
 
 	h, err := deviceGetHandleByIndex(idx)
 	assert(err)
+
+	device, err = newDevice(h)
+	assert(err)
+
+	return device, err
+}
+
+func NewDeviceByUUID(uuid string) (device *Device, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
+	h, err := deviceGetHandleByUUID(uuid)
+	assert(err)
+
+	device, err = newDevice(h)
+	assert(err)
+
+	return device, err
+}
+
+func newDevice(h handle) (device *Device, err error) {
 	model, err := h.deviceGetName()
 	assert(err)
 	uuid, err := h.deviceGetUUID()
@@ -357,10 +383,17 @@ func NewDevice(idx uint) (device *Device, err error) {
 	cccMajor, cccMinor, err := h.deviceGetCudaComputeCapability()
 	assert(err)
 
-	if minor == nil || busid == nil || uuid == nil {
-		return nil, ErrUnsupportedGPU
+	var path string
+	if runtime.GOOS == "windows" {
+		if busid == nil || uuid == nil {
+			return nil, ErrUnsupportedGPU
+		}
+	} else {
+		if minor == nil || busid == nil || uuid == nil {
+			return nil, ErrUnsupportedGPU
+		}
+		path = fmt.Sprintf("/dev/nvidia%d", *minor)
 	}
-	path := fmt.Sprintf("/dev/nvidia%d", *minor)
 	node, err := numaNode(*busid)
 	assert(err)
 
@@ -404,6 +437,30 @@ func NewDeviceLite(idx uint) (device *Device, err error) {
 
 	h, err := deviceGetHandleByIndex(idx)
 	assert(err)
+
+	device, err = newDeviceLite(h)
+	assert(err)
+
+	return device, err
+}
+
+func NewDeviceLiteByUUID(uuid string) (device *Device, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
+	h, err := deviceGetHandleByUUID(uuid)
+	assert(err)
+
+	device, err = newDeviceLite(h)
+	assert(err)
+
+	return device, err
+}
+
+func newDeviceLite(h handle) (device *Device, err error) {
 	uuid, err := h.deviceGetUUID()
 	assert(err)
 	minor, err := h.deviceGetMinorNumber()
@@ -430,7 +487,7 @@ func NewDeviceLite(idx uint) (device *Device, err error) {
 	return
 }
 
-func (d *Device) Status() (status *DeviceStatus, err error) {
+func (d *Device) Status(proc string) (status *DeviceStatus, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
@@ -438,6 +495,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	}()
 
 	power, err := d.deviceGetPowerUsage()
+	assert(err)
+	fanSpeed, err := d.deviceGetFanSpeed()
 	assert(err)
 	temp, err := d.deviceGetTemperature()
 	assert(err)
@@ -461,12 +520,13 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	assert(err)
 	perfState, err := d.getPerformanceState()
 	assert(err)
-	processInfo, err := d.deviceGetAllRunningProcesses()
+	processInfo, err := d.deviceGetAllRunningProcesses(proc)
 	assert(err)
 
 	status = &DeviceStatus{
 		Power:       power,
-		Temperature: temp, // °C
+		FanSpeed:    fanSpeed, // %
+		Temperature: temp,     // °C
 		Utilization: UtilizationInfo{
 			GPU:     ugpu, // %
 			Memory:  umem, // %
@@ -576,7 +636,7 @@ func (d *Device) GetGraphicsRunningProcesses() ([]uint, []uint64, error) {
 }
 
 func (d *Device) GetAllRunningProcesses() ([]ProcessInfo, error) {
-	return d.handle.deviceGetAllRunningProcesses()
+	return d.handle.deviceGetAllRunningProcesses("/proc")
 }
 
 func (d *Device) GetDeviceMode() (mode *DeviceMode, err error) {
@@ -601,4 +661,132 @@ func (d *Device) GetDeviceMode() (mode *DeviceMode, err error) {
 		AccountingInfo: accounting,
 	}
 	return
+}
+
+func (d *Device) IsMigEnabled() (bool, error) {
+	return d.handle.isMigEnabled()
+}
+
+func (d *Device) GetMigDevices() ([]*Device, error) {
+	handles, err := d.handle.getMigDevices()
+	if err != nil {
+		return nil, err
+	}
+
+	var devices []*Device
+	for _, h := range handles {
+		uuid, err := h.deviceGetUUID()
+		if err != nil {
+			return nil, err
+		}
+
+		model, err := d.deviceGetName()
+		if err != nil {
+			return nil, err
+		}
+
+		totalMem, _, err := h.deviceGetMemoryInfo()
+		if err != nil {
+			return nil, err
+		}
+
+		device := &Device{
+			handle:      h,
+			UUID:        *uuid,
+			Model:       model,
+			Memory:      totalMem,
+			CPUAffinity: d.CPUAffinity,
+			Path:        d.Path,
+		}
+
+		devices = append(devices, device)
+	}
+
+	return devices, nil
+}
+
+func (d *Device) GetMigParentDevice() (*Device, error) {
+	parent, err := d.handle.deviceGetDeviceHandleFromMigDeviceHandle()
+	if err != nil {
+		return nil, err
+	}
+
+	index, err := parent.deviceGetIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	return NewDevice(*index)
+}
+
+func (d *Device) GetMigParentDeviceLite() (*Device, error) {
+	parent, err := d.handle.deviceGetDeviceHandleFromMigDeviceHandle()
+	if err != nil {
+		return nil, err
+	}
+
+	index, err := parent.deviceGetIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	return NewDeviceLite(*index)
+}
+
+func ParseMigDeviceUUID(uuid string) (string, uint, uint, error) {
+	migHandle, err := deviceGetHandleByUUID(uuid)
+	if err == nil {
+		return getMIGDeviceInfo(migHandle)
+	}
+	return parseMigDeviceUUID(uuid)
+}
+
+func getMIGDeviceInfo(migHandle handle) (string, uint, uint, error) {
+	parentHandle, err := migHandle.deviceGetDeviceHandleFromMigDeviceHandle()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	parentUUID, err := parentHandle.deviceGetUUID()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	migDevice := Device{handle: migHandle}
+
+	gi, err := migDevice.GetGPUInstanceId()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	ci, err := migDevice.GetComputeInstanceId()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	return *parentUUID, uint(gi), uint(ci), err
+}
+
+func parseMigDeviceUUID(mig string) (string, uint, uint, error) {
+	tokens := strings.SplitN(mig, "-", 2)
+	if len(tokens) != 2 || tokens[0] != "MIG" {
+		return "", 0, 0, fmt.Errorf("Unable to parse UUID as MIG device")
+	}
+
+	tokens = strings.SplitN(tokens[1], "/", 3)
+	if len(tokens) != 3 || !strings.HasPrefix(tokens[0], "GPU-") {
+		return "", 0, 0, fmt.Errorf("Unable to parse UUID as MIG device")
+	}
+
+	gi, err := strconv.Atoi(tokens[1])
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("Unable to parse UUID as MIG device")
+	}
+
+	ci, err := strconv.Atoi(tokens[2])
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("Unable to parse UUID as MIG device")
+	}
+
+	return tokens[0], uint(gi), uint(ci), nil
 }

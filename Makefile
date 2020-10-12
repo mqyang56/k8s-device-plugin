@@ -20,7 +20,7 @@
 
 DOCKER   ?= docker
 REGISTRY ?= hub.gddi.com/kube-plugins
-VERSION  ?= 1.0.0-beta6_13
+VERSION  ?= 1.0.0-beta6_15
 
 ##### Public rules #####
 

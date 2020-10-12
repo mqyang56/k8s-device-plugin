@@ -35,6 +35,8 @@ const (
 	envEnableFilterByProcess = "FILTER_BY_PROCESS"
 	envEnableFilterByGPUUTIL = "FILTER_BY_GPU_UTIL"
 	envEnableFilterByMemory  = "FILTER_BY_MEMORY"
+	envIgnoreProcess         = "IGNORE_PROCESS"
+	envProcPath              = "PROC_PATH"
 )
 
 type Device struct {
@@ -118,6 +120,11 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 		check(err)
 	}
 
+	proc := os.Getenv(envProcPath)
+	if proc == "" {
+		proc = "/proc"
+	}
+
 	// filter gpus which had running one or more processes
 	if os.Getenv(envEnableFilterByProcess) != "" || os.Getenv(envEnableFilterByGPUUTIL) != "" || os.Getenv(envEnableFilterByMemory) != "" {
 		log.Printf("Environments: %s=%s,%s=%s,%s=%s", envEnableFilterByProcess, os.Getenv(envEnableFilterByProcess), envEnableFilterByGPUUTIL, os.Getenv(envEnableFilterByGPUUTIL), envEnableFilterByMemory, os.Getenv(envEnableFilterByMemory))
@@ -150,10 +157,20 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 							if device.UUID != d.ID {
 								continue
 							}
-
-							stat, err := device.Status()
+							stat, err := device.Status(proc)
 							if err != nil {
 								log.Printf("Error: failed to get device status %v", err)
+								continue
+							}
+
+							var isk8s bool
+							for _, v := range stat.Processes {
+								if os.Getenv(envIgnoreProcess) != "" && strings.Contains(v.Name, os.Getenv(envIgnoreProcess)) {
+									isk8s = true
+									break
+								}
+							}
+							if isk8s {
 								continue
 							}
 

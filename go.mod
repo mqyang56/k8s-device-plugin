@@ -3,6 +3,7 @@ module github.com/NVIDIA/k8s-device-plugin
 go 1.14
 
 replace (
+	github.com/NVIDIA/gpu-monitoring-tools => github.com/mqyang56/gpu-monitoring-tools v0.0.0-20201012062234-7d5f4897e738
 	k8s.io/api => k8s.io/api v0.18.2
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.18.2
 	k8s.io/apimachinery => k8s.io/apimachinery v0.18.2
@@ -27,7 +28,7 @@ replace (
 )
 
 require (
-	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20200421213100-de959f43b55a
+	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20201012062234-7d5f4897e738
 	github.com/fsnotify/fsnotify v1.4.9
 	golang.org/x/net v0.0.0-20200421231249-e086a090c8fd
 	google.golang.org/grpc v1.29.0

@@ -345,8 +345,6 @@ github.com/modern-go/reflect2 v1.0.1/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3Rllmb
 github.com/mohae/deepcopy v0.0.0-20170603005431-491d3605edfb/go.mod h1:TaXosZuwdSHYgviHp1DAtfrULt5eUgsSMsZf+YrPgl8=
 github.com/morikuni/aec v1.0.0/go.mod h1:BbKIizmSmc5MMPqRYbxO4ZU0S0+P200+tUnFx7PXmsc=
 github.com/mozilla/tls-observatory v0.0.0-20180409132520-8791a200eb40/go.mod h1:SrKMQvPiws7F7iqYp8/TX+IhxCYhzr6N/1yb8cwHsGk=
-github.com/mqyang56/gpu-monitoring-tools v0.0.0-20201012053825-461332803bfe h1:BPRjn+S+j0bA2yaReWPvrjTxFwPkH1lSvDpAIv8F2UM=
-github.com/mqyang56/gpu-monitoring-tools v0.0.0-20201012053825-461332803bfe/go.mod h1:l0Cq257MSJMvg9URCXUjc8pgKY2SK1oSvIx6qG0bzzc=
 github.com/mqyang56/gpu-monitoring-tools v0.0.0-20201012062234-7d5f4897e738 h1:bNt+IBg+fNUK7ysTy+nKJY8Ezt4NougG5jbWFtlQmtU=
 github.com/mqyang56/gpu-monitoring-tools v0.0.0-20201012062234-7d5f4897e738/go.mod h1:l0Cq257MSJMvg9URCXUjc8pgKY2SK1oSvIx6qG0bzzc=
 github.com/mrunalp/fileutils v0.0.0-20171103030105-7d4729fb3618/go.mod h1:x8F1gnqOkIEiO4rqoeEEEqQbo7HjGMTvyoq3gej4iT0=

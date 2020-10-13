@@ -107,6 +107,12 @@ func (m *NvidiaDevicePlugin) Start() error {
 // Stop stops the gRPC server.
 func (m *NvidiaDevicePlugin) Stop() error {
 	if m == nil || m.server == nil {
+		if _, err := os.Stat(m.socket); err == nil || os.IsExist(err) {
+			log.Printf("Remove socket file, though server is nil.")
+			if err := os.Remove(m.socket); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
 		return nil
 	}
 	log.Printf("Stopping to serve '%s' on %s", m.resourceName, m.socket)

@@ -24,17 +24,25 @@ import (
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
 
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
+	"strconv"
+	"github.com/golang/protobuf/ptypes/empty"
+	"google.golang.org/grpc"
+	"context"
+	"time"
+	"k8s.io/klog"
 )
 
 const (
 	envDisableHealthChecks = "DP_DISABLE_HEALTHCHECKS"
 	allHealthChecks        = "xids"
+	gpuManagerAddr         = "/var/run/gpu-manager.sock"
 )
 
 // Device couples an underlying pluginapi.Device type with its device node path
 type Device struct {
 	pluginapi.Device
-	Path string
+	Path                 string
+	CustomDefinedHealthy bool
 }
 
 // ResourceManager provides an interface for listing a set of Devices and checking health on them
@@ -177,11 +185,108 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 		err = nvml.RegisterEventForDevice(eventSet, nvml.XidCriticalError, gpu)
 		if err != nil && strings.HasSuffix(err.Error(), "Not Supported") {
 			log.Printf("Warning: %s is too old to support healthchecking: %s. Marking it unhealthy.", d.ID, err)
+			d.Health = pluginapi.Unhealthy
 			unhealthy <- d
 			continue
 		}
 		check(err)
 	}
+
+	go func() {
+		sync := false
+		defer func() {
+			if sync {
+				klog.Info("End to sync gpu from gpu-manager")
+			}
+		}()
+
+		if _, err := os.Stat(gpuManagerAddr); os.IsNotExist(err) {
+			return
+		}
+		conn, err := grpc.Dial(gpuManagerAddr, []grpc.DialOption{grpc.WithInsecure(), grpc.WithContextDialer(UnixDial), grpc.WithBlock()}...)
+		if err != nil {
+			log.Fatalf("can't dial %s, error %v", gpuManagerAddr, err)
+		}
+		defer conn.Close()
+		sync = true
+		klog.Info("Start to sync gpu from gpu-manager")
+		t := time.NewTicker(3 * time.Second)
+		defer t.Stop()
+		var preAllocatedGPU map[uint]struct{}
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				client := NewGPUDisplayClient(conn)
+				in := &empty.Empty{}
+				usages, err := client.PrintUsages(context.TODO(), in)
+				if err != nil {
+					log.Printf("Failed to PrintUsages: %v \n", err)
+					continue
+				}
+
+				allocatedGPU := map[uint]struct{}{}
+				for _, v := range usages.Usage {
+					for k, v1 := range v.Stat {
+						if len(v1.Dev) > 0 && (v.Spec[k].Gpu > 0 || v.Spec[k].Mem > 0) {
+							id, err := strconv.Atoi(v1.Dev[0].CardIdx)
+							if err != nil {
+								continue
+							}
+							allocatedGPU[uint(id)] = struct{}{}
+						}
+					}
+				}
+
+				for k, _ := range preAllocatedGPU {
+					if _, ok := allocatedGPU[k]; !ok {
+						device, err := nvml.NewDeviceLite(k)
+						if err != nil {
+							log.Printf("Error: %v \n", err)
+							continue
+						}
+						for _, d := range devices {
+							if !d.CustomDefinedHealthy || device.UUID != d.ID {
+								continue
+							}
+							d.CustomDefinedHealthy = true
+							d.Health = pluginapi.Healthy
+							unhealthy <- d
+						}
+					}
+				}
+
+				for i, d := range devices {
+					if d.Health == pluginapi.Unhealthy {
+						continue
+					}
+					count, err := nvml.GetDeviceCount()
+					if err != nil {
+						log.Printf("Error: %v \n", err)
+						continue
+					}
+					for j := uint(0); j < count; j++ {
+						device, err := nvml.NewDeviceLite(j)
+						if err != nil {
+							log.Printf("Error: %v \n", err)
+							continue
+						}
+						if device.UUID != d.ID {
+							continue
+						}
+						if _, ok := allocatedGPU[j]; ok {
+							devices[i].CustomDefinedHealthy = true
+							devices[i].Health = pluginapi.Unhealthy
+							unhealthy <- devices[i]
+							break
+						}
+					}
+				}
+				preAllocatedGPU = allocatedGPU
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -206,6 +311,8 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 			// All devices are unhealthy
 			log.Printf("XidCriticalError: Xid=%d, All devices will go unhealthy.", e.Edata)
 			for _, d := range devices {
+				d.Health = pluginapi.Unhealthy
+				d.CustomDefinedHealthy = false
 				unhealthy <- d
 			}
 			continue
@@ -223,6 +330,8 @@ func checkHealth(stop <-chan interface{}, devices []*Device, unhealthy chan<- *D
 
 			if gpu == *e.UUID && gi == *e.GpuInstanceId && ci == *e.ComputeInstanceId {
 				log.Printf("XidCriticalError: Xid=%d on Device=%s, the device will go unhealthy.", e.Edata, d.ID)
+				d.Health = pluginapi.Unhealthy
+				d.CustomDefinedHealthy = false
 				unhealthy <- d
 			}
 		}

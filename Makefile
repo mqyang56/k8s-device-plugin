@@ -20,10 +20,10 @@
 
 DOCKER   ?= docker
 ifeq ($(IMAGE),)
-REGISTRY ?= nvidia
+REGISTRY ?= hub.gddi.com/kube-plugins
 IMAGE := $(REGISTRY)/k8s-device-plugin
 endif
-VERSION  ?= v0.7.3
+VERSION  ?= v0.7.3_3
 
 ##### Public rules #####
 

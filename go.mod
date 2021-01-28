@@ -30,7 +30,10 @@ require (
 	github.com/NVIDIA/go-gpuallocator v0.2.1
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20201222072828-352eb4c503a7
 	github.com/fsnotify/fsnotify v1.4.9
+	github.com/golang/protobuf v1.4.2
 	golang.org/x/net v0.0.0-20200707034311-ab3426394381
+	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
 	google.golang.org/grpc v1.29.0
-	k8s.io/kubelet v0.0.0
+	k8s.io/klog v1.0.0
+	k8s.io/kubelet v0.17.4
 )
